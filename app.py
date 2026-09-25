@@ -174,90 +174,155 @@ elif menu == "Admin Panel":
     if password == "admin123":
         st.success("Welcome Admin!")
         
-        if os.path.exists(CORRECTIONS_FILE):
-            try:
-                corrections = pd.read_csv(CORRECTIONS_FILE, on_bad_lines='skip')
-            except Exception:
-                corrections = pd.read_csv(CORRECTIONS_FILE, engine='python', on_bad_lines='skip')
-            
-            # Remove duplicates: Keep latest entry per student
-            if 'Adm. No.' in corrections.columns:
-                unique_corrections = corrections.drop_duplicates(subset=['Adm. No.'], keep='last')
+        tab1, tab2 = st.tabs(["📊 Corrections List", "➕ Add New Student Data"])
+        
+        with tab1:
+            if os.path.exists(CORRECTIONS_FILE):
+                try:
+                    corrections = pd.read_csv(CORRECTIONS_FILE, on_bad_lines='skip')
+                except Exception:
+                    corrections = pd.read_csv(CORRECTIONS_FILE, engine='python', on_bad_lines='skip')
+                
+                if 'Adm. No.' in corrections.columns:
+                    unique_corrections = corrections.drop_duplicates(subset=['Adm. No.'], keep='last')
+                else:
+                    unique_corrections = corrections
+                    
+                st.write(f"Total Submissions: **{len(corrections)}** | Unique Students: **{len(unique_corrections)}**")
+                st.dataframe(unique_corrections)
+                
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    unique_corrections.to_excel(writer, index=False, sheet_name='Corrections')
+                
+                st.download_button(
+                    label="📊 Download Correction Excel (Unique Records)",
+                    data=buffer.getvalue(),
+                    file_name="student_corrections.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                
+                st.divider()
+                st.subheader("🖼️ Download Photos")
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    zip_buffer_new = io.BytesIO()
+                    new_photos_count = 0
+                    
+                    with zipfile.ZipFile(zip_buffer_new, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                        for idx, c_row in unique_corrections.iterrows():
+                            saved_file = str(c_row.get('Saved Photo Filename', '')).strip()
+                            if saved_file and saved_file != 'nan' and os.path.exists(os.path.join(PHOTOS_DIR, saved_file)):
+                                filepath = os.path.join(PHOTOS_DIR, saved_file)
+                                zip_file.write(filepath, arcname=saved_file)
+                                new_photos_count += 1
+
+                    st.download_button(
+                        label=f"📸 Download ONLY New Uploaded Photos ({new_photos_count})",
+                        data=zip_buffer_new.getvalue(),
+                        file_name="newly_uploaded_photos.zip",
+                        mime="application/zip",
+                        disabled=(new_photos_count == 0)
+                    )
+                
+                with col2:
+                    zip_buffer_all = io.BytesIO()
+                    all_photos_count = 0
+                    
+                    with zipfile.ZipFile(zip_buffer_all, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                        for idx, c_row in unique_corrections.iterrows():
+                            photo_code = str(c_row.get('Photo Code', '')).strip()
+                            saved_file = str(c_row.get('Saved Photo Filename', '')).strip()
+                            
+                            if saved_file and saved_file != 'nan' and os.path.exists(os.path.join(PHOTOS_DIR, saved_file)):
+                                filepath = os.path.join(PHOTOS_DIR, saved_file)
+                                zip_file.write(filepath, arcname=saved_file)
+                                all_photos_count += 1
+                            elif photo_code and photo_code != 'nan':
+                                for ext in ['.jpg', '.JPG', '.jpeg', '.png']:
+                                    orig_path = os.path.join(PHOTOS_DIR, f"{photo_code}{ext}")
+                                    if os.path.exists(orig_path):
+                                        zip_file.write(orig_path, arcname=f"{photo_code}{ext}")
+                                        all_photos_count += 1
+                                        break
+
+                    st.download_button(
+                        label=f"📁 Download All Correction Student Photos ({all_photos_count})",
+                        data=zip_buffer_all.getvalue(),
+                        file_name="all_correction_photos.zip",
+                        mime="application/zip",
+                        disabled=(all_photos_count == 0)
+                    )
+
+                st.divider()
+                if st.button("🗑️ Clear / Reset All Correction Data"):
+                    os.remove(CORRECTIONS_FILE)
+                    st.success("All correction records cleared!")
+                    st.rerun()
             else:
-                unique_corrections = corrections
+                st.info("Abhi tak koi correction request nahi aayi hai.")
                 
-            st.write(f"Total Submissions: **{len(corrections)}** | Unique Students: **{len(unique_corrections)}**")
-            st.dataframe(unique_corrections)
+        with tab2:
+            st.subheader("➕ Naya Student Record Add Karein")
+            st.info("Yahan se naya student data add karne par wo direct '1.xlsx' main database file me save ho jayega.")
             
-            # Download Excel
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                unique_corrections.to_excel(writer, index=False, sheet_name='Corrections')
-            
-            st.download_button(
-                label="📊 Download Correction Excel (Unique Records)",
-                data=buffer.getvalue(),
-                file_name="student_corrections.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-            )
-            
-            st.divider()
-            st.subheader("🖼️ Download Photos")
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                zip_buffer_new = io.BytesIO()
-                new_photos_count = 0
+            with st.form(key="add_student_form"):
+                add_sr_no = st.number_input("Sr No", value=len(df)+1, step=1)
+                add_adm_no = st.text_input("Adm. No. (Admission Number)*")
+                add_name = st.text_input("Student Name*")
+                add_father = st.text_input("Father's Name")
+                add_mother = st.text_input("Mother's Name")
+                add_class = st.text_input("CLASS (e.g. VI, X, XII)")
+                add_section = st.text_input("SECTION (e.g. A1, B)")
+                add_photo_code = st.text_input("Photo Code (e.g. KR-1500)")
+                add_colour = st.text_input("House / Colour (e.g. HANSRAJ)")
+                add_dob = st.text_input("DOB (DD/MM/YYYY)")
+                add_phone = st.text_input("Phone No.")
+                add_address = st.text_area("Address")
+                add_mode = st.selectbox("MODE", ["SELF", "SCHOOL BUS", "OTHER"])
                 
-                with zipfile.ZipFile(zip_buffer_new, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                    for idx, c_row in unique_corrections.iterrows():
-                        saved_file = str(c_row.get('Saved Photo Filename', '')).strip()
-                        if saved_file and saved_file != 'nan' and os.path.exists(os.path.join(PHOTOS_DIR, saved_file)):
-                            filepath = os.path.join(PHOTOS_DIR, saved_file)
-                            zip_file.write(filepath, arcname=saved_file)
-                            new_photos_count += 1
-
-                st.download_button(
-                    label=f"📸 Download ONLY New Uploaded Photos ({new_photos_count})",
-                    data=zip_buffer_new.getvalue(),
-                    file_name="newly_uploaded_photos.zip",
-                    mime="application/zip",
-                    disabled=(new_photos_count == 0)
-                )
-            
-            with col2:
-                zip_buffer_all = io.BytesIO()
-                all_photos_count = 0
+                uploaded_photo_file = st.file_uploader("Upload Student Photo", type=['jpg', 'jpeg', 'png'])
                 
-                with zipfile.ZipFile(zip_buffer_all, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                    for idx, c_row in unique_corrections.iterrows():
-                        photo_code = str(c_row.get('Photo Code', '')).strip()
-                        saved_file = str(c_row.get('Saved Photo Filename', '')).strip()
+                add_submit = st.form_submit_button("➕ Save Student Data")
+                
+                if add_submit:
+                    if not add_adm_no.strip() or not add_name.strip():
+                        st.error("Adm. No. aur Student Name fill karna zaroori hai.")
+                    else:
+                        # Photo save logic
+                        final_photo_code = add_photo_code.strip() if add_photo_code.strip() else f"NEW_{add_adm_no.strip()}"
                         
-                        if saved_file and saved_file != 'nan' and os.path.exists(os.path.join(PHOTOS_DIR, saved_file)):
-                            filepath = os.path.join(PHOTOS_DIR, saved_file)
-                            zip_file.write(filepath, arcname=saved_file)
-                            all_photos_count += 1
-                        elif photo_code and photo_code != 'nan':
-                            for ext in ['.jpg', '.JPG', '.jpeg', '.png']:
-                                orig_path = os.path.join(PHOTOS_DIR, f"{photo_code}{ext}")
-                                if os.path.exists(orig_path):
-                                    zip_file.write(orig_path, arcname=f"{photo_code}{ext}")
-                                    all_photos_count += 1
-                                    break
-
-                st.download_button(
-                    label=f"📁 Download All Correction Student Photos ({all_photos_count})",
-                    data=zip_buffer_all.getvalue(),
-                    file_name="all_correction_photos.zip",
-                    mime="application/zip",
-                    disabled=(all_photos_count == 0)
-                )
-
-            st.divider()
-            if st.button("🗑️ Clear / Reset All Correction Data"):
-                os.remove(CORRECTIONS_FILE)
-                st.success("All correction records cleared!")
-                st.rerun()
-        else:
-            st.info("Abhi tak koi correction request nahi aayi hai.")
+                        if uploaded_photo_file is not None:
+                            os.makedirs(PHOTOS_DIR, exist_ok=True)
+                            photo_save_path = os.path.join(PHOTOS_DIR, f"{final_photo_code}.jpg")
+                            with open(photo_save_path, "wb") as f:
+                                f.write(uploaded_photo_file.getbuffer())
+                        
+                        new_student_dict = {
+                            'Sr No': add_sr_no,
+                            'Adm. No.': add_adm_no.strip(),
+                            'Student Name': add_name.strip(),
+                            "Father's Name": add_father.strip(),
+                            "Mother's Name": add_mother.strip(),
+                            'CLASS': add_class.strip(),
+                            'SECTION': add_section.strip(),
+                            'photo': final_photo_code,
+                            'colour': add_colour.strip(),
+                            'DOB': add_dob.strip(),
+                            'Phone No.': add_phone.strip(),
+                            'Address': add_address.strip(),
+                            'MODE': add_mode
+                        }
+                        
+                        # Read existing excel, append and save back
+                        try:
+                            current_excel_df = pd.read_excel(EXCEL_FILE)
+                            new_row_df = pd.DataFrame([new_student_dict])
+                            updated_excel_df = pd.concat([current_excel_df, new_row_df], ignore_index=True)
+                            updated_excel_df.to_excel(EXCEL_FILE, index=False)
+                            
+                            st.cache_data.clear()  # Clear Streamlit cache so new data reflects immediately
+                            st.success(f"✅ Student **{add_name.strip()}** successfully Excel database me add ho gaya hai!")
+                        except Exception as e:
+                            st.error(f"Excel file update karne me error aaya: {e}")
