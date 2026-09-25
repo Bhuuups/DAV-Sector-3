@@ -17,16 +17,13 @@ PHOTOS_DIR = 'static/photos'
 def process_and_save_image(image_file, save_path, max_size_mb=1.0):
     try:
         img = Image.open(image_file)
-        # Convert RGBA/P mode to RGB for JPEG compatibility
         if img.mode in ("RGBA", "P"):
             img = img.convert("RGB")
             
-        # Resize if dimensions are unnecessarily huge (e.g. max 1920px width/height)
         max_dim = 1920
         if max(img.size) > max_dim:
             img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
             
-        # Quality compression loop to ensure file size <= max_size_mb
         quality = 85
         buffer = io.BytesIO()
         
@@ -171,7 +168,6 @@ if menu == "Parent Portal":
                         clean_addr_new = str(new_address).replace('\n', ' ').replace(',', ' ')
                         changes.append(f"Address: {clean_addr_old} -> {clean_addr_new}")
                     
-                    # Compress and save image if provided
                     if new_photo is not None:
                         os.makedirs(PHOTOS_DIR, exist_ok=True)
                         saved_photo_filename = f"{photo_name}_updated.jpg"
@@ -309,7 +305,7 @@ elif menu == "Admin Panel":
                 
         with tab2:
             st.subheader("➕ Naya Student Record Add Karein")
-            st.info("Yahan se naya student data add karne par wo direct '1.xlsx' main database file me save ho jayega.")
+            st.info("Yahan se naya student data add karne par wo '1.xlsx' aur 'Corrections List' dono jagah save ho jayega.")
             
             with st.form(key="add_student_form"):
                 add_sr_no = st.number_input("Sr No", value=len(df)+1, step=1)
@@ -343,11 +339,15 @@ elif menu == "Admin Panel":
                         st.error("Adm. No. aur Student Name fill karna zaroori hai.")
                     else:
                         final_photo_code = add_photo_code.strip() if add_photo_code.strip() else f"NEW_{add_adm_no.strip()}"
+                        saved_photo_filename = ""
+                        has_new_photo = 'No'
                         
                         if uploaded_photo_file is not None:
                             os.makedirs(PHOTOS_DIR, exist_ok=True)
-                            photo_save_path = os.path.join(PHOTOS_DIR, f"{final_photo_code}.jpg")
+                            saved_photo_filename = f"{final_photo_code}.jpg"
+                            photo_save_path = os.path.join(PHOTOS_DIR, saved_photo_filename)
                             process_and_save_image(uploaded_photo_file, photo_save_path, max_size_mb=1.0)
+                            has_new_photo = 'Yes'
                         
                         new_student_dict = {
                             'Sr No': add_sr_no,
@@ -365,13 +365,37 @@ elif menu == "Admin Panel":
                             'MODE': add_mode
                         }
                         
+                        # 1. Save to main Excel database (1.xlsx)
                         try:
                             current_excel_df = pd.read_excel(EXCEL_FILE)
                             new_row_df = pd.DataFrame([new_student_dict])
                             updated_excel_df = pd.concat([current_excel_df, new_row_df], ignore_index=True)
                             updated_excel_df.to_excel(EXCEL_FILE, index=False)
-                            
-                            st.cache_data.clear()
-                            st.success(f"✅ Student **{add_name.strip()}** successfully Excel database me add ho gaya hai!")
                         except Exception as e:
                             st.error(f"Excel file update karne me error aaya: {e}")
+                        
+                        # 2. Also save to Corrections CSV (corrections.csv)
+                        correction_entry = {
+                            'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            'Adm. No.': add_adm_no.strip(),
+                            'Student Name': add_name.strip().replace(',', ' '),
+                            'Changed Fields': "New Student Added via Admin Panel",
+                            'DOB': str(add_dob).strip().replace(',', ' '),
+                            'Father Name': str(add_father).strip().replace(',', ' '),
+                            'Mother Name': str(add_mother).strip().replace(',', ' '),
+                            'Colour': str(add_colour).strip().replace(',', ' '),
+                            'Phone No.': str(add_phone).strip().replace(',', ' '),
+                            'Address': str(add_address).strip().replace('\n', ' ').replace(',', ' '),
+                            'Photo Code': final_photo_code,
+                            'New Photo Uploaded': has_new_photo,
+                            'Saved Photo Filename': saved_photo_filename
+                        }
+                        
+                        corr_df = pd.DataFrame([correction_entry])
+                        if not os.path.exists(CORRECTIONS_FILE):
+                            corr_df.to_csv(CORRECTIONS_FILE, index=False)
+                        else:
+                            corr_df.to_csv(CORRECTIONS_FILE, mode='a', header=False, index=False)
+                            
+                        st.cache_data.clear()
+                        st.success(f"✅ Student **{add_name.strip()}** Excel database aur Corrections List dono me add ho gaya hai!")
