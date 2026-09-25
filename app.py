@@ -117,22 +117,24 @@ if menu == "Parent Portal":
                     has_new_photo = 'No'
                     saved_photo_filename = ""
                     
-                    # Track changes made by parent
+                    # Track changes made by parent (Cleaning commas and quotes for CSV safety)
                     changes = []
                     if str(new_name).strip() != str(row['Student Name']).strip():
-                        changes.append(f"Name: '{row['Student Name']}' ➔ '{new_name}'")
+                        changes.append(f"Name: {row['Student Name']} -> {new_name}")
                     if str(new_dob).strip() != str(row.get('DOB', '')).strip():
-                        changes.append(f"DOB: '{row.get('DOB', '')}' ➔ '{new_dob}'")
+                        changes.append(f"DOB: {row.get('DOB', '')} -> {new_dob}")
                     if str(new_father).strip() != str(row.get("Father's Name", '')).strip():
-                        changes.append(f"Father: '{row.get('Father\'s Name', '')}' ➔ '{new_father}'")
+                        changes.append(f"Father: {row.get('Father\'s Name', '')} -> {new_father}")
                     if str(new_mother).strip() != str(row.get("Mother's Name", '')).strip():
-                        changes.append(f"Mother: '{row.get('Mother\'s Name', '')}' ➔ '{new_mother}'")
+                        changes.append(f"Mother: {row.get('Mother\'s Name', '')} -> {new_mother}")
                     if str(new_colour).strip() != str(row.get('colour', '')).strip():
-                        changes.append(f"Colour: '{row.get('colour', '')}' ➔ '{new_colour}'")
+                        changes.append(f"Colour: {row.get('colour', '')} -> {new_colour}")
                     if str(new_contact).strip() != phone_str.strip():
-                        changes.append(f"Phone: '{phone_str}' ➔ '{new_contact}'")
+                        changes.append(f"Phone: {phone_str} -> {new_contact}")
                     if str(new_address).strip() != str(row.get('Address', '')).strip():
-                        changes.append(f"Address: '{row.get('Address', '')}' ➔ '{new_address}'")
+                        clean_addr_old = str(row.get('Address', '')).replace('\n', ' ').replace(',', ' ')
+                        clean_addr_new = str(new_address).replace('\n', ' ').replace(',', ' ')
+                        changes.append(f"Address: {clean_addr_old} -> {clean_addr_new}")
                     
                     # Save image if uploaded
                     if new_photo is not None:
@@ -144,19 +146,19 @@ if menu == "Parent Portal":
                             f.write(new_photo.getbuffer())
                         changes.append("New Photo Uploaded")
                     
-                    change_summary = "; ".join(changes) if changes else "No Text Change"
+                    change_summary = " | ".join(changes) if changes else "No Text Change"
                     
                     correction_data = {
                         'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         'Adm. No.': row['Adm. No. Clean'],
-                        'Student Name': new_name,
+                        'Student Name': str(new_name).replace(',', ' '),
                         'Changed Fields': change_summary,
-                        'DOB': new_dob,
-                        'Father Name': new_father,
-                        'Mother Name': new_mother,
-                        'Colour': new_colour,
-                        'Phone No.': new_contact,
-                        'Address': new_address,
+                        'DOB': str(new_dob).replace(',', ' '),
+                        'Father Name': str(new_father).replace(',', ' '),
+                        'Mother Name': str(new_mother).replace(',', ' '),
+                        'Colour': str(new_colour).replace(',', ' '),
+                        'Phone No.': str(new_contact).replace(',', ' '),
+                        'Address': str(new_address).replace('\n', ' ').replace(',', ' '),
                         'Photo Code': photo_name,
                         'New Photo Uploaded': has_new_photo,
                         'Saved Photo Filename': saved_photo_filename
@@ -181,7 +183,12 @@ elif menu == "Admin Panel":
         st.success("Welcome Admin!")
         
         if os.path.exists(CORRECTIONS_FILE):
-            corrections = pd.read_csv(CORRECTIONS_FILE)
+            try:
+                corrections = pd.read_csv(CORRECTIONS_FILE, on_bad_lines='skip')
+            except Exception as e:
+                st.error("Corrupted CSV structure detected. Resetting view logic.")
+                corrections = pd.read_csv(CORRECTIONS_FILE, engine='python', on_bad_lines='skip')
+                
             st.write(f"Total Corrections Received: **{len(corrections)}**")
             st.dataframe(corrections)
             
