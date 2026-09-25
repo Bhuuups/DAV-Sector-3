@@ -5,7 +5,7 @@ import requests
 from datetime import datetime
 
 # Page Configuration
-st.set_page_config(page_title="ID Card Verification Portal", layout="centered")
+st.set_page_config(page_title="DAV Sector - 3", layout="centered")
 
 EXCEL_FILE = '1.xlsx'
 CORRECTIONS_FILE = 'corrections.csv'
