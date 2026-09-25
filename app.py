@@ -1,6 +1,8 @@
 import pandas as pd
 import streamlit as st
 import os
+import io
+import zipfile
 from datetime import datetime
 
 # Page Configuration
@@ -57,7 +59,6 @@ if menu == "Parent Portal":
             
             with col1:
                 if photo_name:
-                    # Check for jpg, jpeg, png, JPG extensions
                     p_jpg = os.path.join(PHOTOS_DIR, f"{photo_name}.jpg")
                     p_JPG = os.path.join(PHOTOS_DIR, f"{photo_name}.JPG")
                     p_jpeg = os.path.join(PHOTOS_DIR, f"{photo_name}.jpeg")
@@ -113,6 +114,18 @@ if menu == "Parent Portal":
                 submit_btn = st.form_submit_button("Submit Corrections")
                 
                 if submit_btn:
+                    has_new_photo = 'No'
+                    saved_photo_filename = ""
+                    
+                    # Save image if uploaded by parent
+                    if new_photo is not None:
+                        os.makedirs(PHOTOS_DIR, exist_ok=True)
+                        has_new_photo = 'Yes'
+                        saved_photo_filename = f"{photo_name}_updated.jpg"
+                        save_path = os.path.join(PHOTOS_DIR, saved_photo_filename)
+                        with open(save_path, "wb") as f:
+                            f.write(new_photo.getbuffer())
+                    
                     correction_data = {
                         'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         'Adm. No.': row['Adm. No. Clean'],
@@ -124,14 +137,9 @@ if menu == "Parent Portal":
                         'Phone No.': new_contact,
                         'Address': new_address,
                         'Photo Code': photo_name,
-                        'New Photo Uploaded': 'Yes' if new_photo is not None else 'No'
+                        'New Photo Uploaded': has_new_photo,
+                        'Saved Photo Filename': saved_photo_filename
                     }
-                    
-                    if new_photo is not None:
-                        os.makedirs(PHOTOS_DIR, exist_ok=True)
-                        save_path = os.path.join(PHOTOS_DIR, f"{photo_name}_updated.jpg")
-                        with open(save_path, "wb") as f:
-                            f.write(new_photo.getbuffer())
                     
                     corr_df = pd.DataFrame([correction_data])
                     
@@ -156,11 +164,50 @@ elif menu == "Admin Panel":
             st.write(f"Total Corrections Received: **{len(corrections)}**")
             st.dataframe(corrections)
             
-            st.download_button(
-                label="📥 Download Corrections CSV",
-                data=corrections.to_csv(index=False),
-                file_name="student_corrections.csv",
-                mime="text/csv"
-            )
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                # 1. Download Only Correction Excel File (.xlsx)
+                buffer = io.BytesIO()
+                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                    corrections.to_excel(writer, index=False, sheet_name='Corrections')
+                
+                st.download_button(
+                    label="📊 Download Correction Excel",
+                    data=buffer.getvalue(),
+                    file_name="student_corrections.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            
+            with col2:
+                # 2. Download ZIP of Only Corrected / Updated Photos
+                zip_buffer = io.BytesIO()
+                photos_count = 0
+                
+                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                    for idx, c_row in corrections.iterrows():
+                        photo_code = str(c_row.get('Photo Code', '')).strip()
+                        saved_file = str(c_row.get('Saved Photo Filename', '')).strip()
+                        
+                        # Pehle parent ki new uploaded photo check karein
+                        if saved_file and os.path.exists(os.path.join(PHOTOS_DIR, saved_file)):
+                            filepath = os.path.join(PHOTOS_DIR, saved_file)
+                            zip_file.write(filepath, arcname=saved_file)
+                            photos_count += 1
+                        # Agar photo_code hai toh original photo zip me daalein
+                        elif photo_code:
+                            for ext in ['.jpg', '.JPG', '.jpeg', '.png']:
+                                orig_path = os.path.join(PHOTOS_DIR, f"{photo_code}{ext}")
+                                if os.path.exists(orig_path):
+                                    zip_file.write(orig_path, arcname=f"{photo_code}{ext}")
+                                    photos_count += 1
+                                    break
+
+                st.download_button(
+                    label=f"🖼️ Download Corrected Photos ({photos_count})",
+                    data=zip_buffer.getvalue(),
+                    file_name="corrected_photos.zip",
+                    mime="application/zip"
+                )
         else:
             st.info("Abhi tak koi correction request nahi aayi hai.")
