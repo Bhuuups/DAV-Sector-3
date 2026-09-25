@@ -253,7 +253,6 @@ elif menu == "Teachers Checklist (Printing Status)":
 
         total_students = len(filtered_df)
 
-        # Merge with current printed status
         if not print_df.empty:
             merged_df = pd.merge(filtered_df, print_df, on='Adm. No. Clean', how='left')
             merged_df['Is_Printed'] = merged_df['Is_Printed'].fillna(False).astype(bool)
@@ -269,7 +268,6 @@ elif menu == "Teachers Checklist (Printing Status)":
 
         st.divider()
 
-        # Display Students with Small Photos and Unique Key Checkbox
         updated_status = False
 
         for idx, s_row in merged_df.reset_index(drop=True).iterrows():
@@ -296,7 +294,6 @@ elif menu == "Teachers Checklist (Printing Status)":
                 st.caption(f"Father: {s_row.get('Father\'s Name', '')} | DOB: {s_row.get('DOB', '')} | Ph: {s_row.get('Phone No.', '')}")
 
             with c_check:
-                # Unique key using Adm No + Index to prevent Duplicate Key Error
                 new_val = st.checkbox("Printed ✅", value=is_printed, key=f"chk_{adm_no}_{idx}")
                 if new_val != is_printed:
                     if adm_no in print_df['Adm. No. Clean'].values:
@@ -327,7 +324,12 @@ elif menu == "Admin Panel":
     if password == "admin123":
         st.success("Welcome Admin!")
         
-        tab1, tab2, tab3 = st.tabs(["📊 Corrections List", "➕ Add New Student Data", "🖨️ Class-wise Print Report"])
+        tab1, tab2, tab3, tab4 = st.tabs([
+            "📊 Corrections List", 
+            "➕ Add New Student Data", 
+            "🖨️ Class-wise Print Report",
+            "⏳ Unprinted (Pending) Students"
+        ])
         
         with tab1:
             if os.path.exists(CORRECTIONS_FILE):
@@ -541,3 +543,74 @@ elif menu == "Admin Panel":
                 )
             else:
                 st.info("Abhi tak teachers ne kisi record ko tick mark nahi kiya hai.")
+
+        with tab4:
+            st.subheader("⏳ Unprinted / Pending ID Cards List")
+            print_df = load_print_status()
+
+            # Merge master df with print status
+            if not print_df.empty:
+                pending_merged = pd.merge(df, print_df, on='Adm. No. Clean', how='left')
+                pending_merged['Is_Printed'] = pending_merged['Is_Printed'].fillna(False).astype(bool)
+                pending_df = pending_merged[pending_merged['Is_Printed'] == False]
+            else:
+                pending_df = df.copy()
+
+            total_pending = len(pending_df)
+            st.warning(f"Total Pending / Unprinted ID Cards: **{total_pending}**")
+
+            if total_pending > 0:
+                # Class Filter for Pending List
+                p_classes = sorted([c for c in pending_df['CLASS'].dropna().unique() if str(c).strip() != ''])
+                sel_p_class = st.selectbox("Filter Pending by Class:", ["All Classes"] + p_classes, key="p_class_flt")
+
+                if sel_p_class != "All Classes":
+                    display_pending = pending_df[pending_df['CLASS'] == sel_p_class]
+                else:
+                    display_pending = pending_df
+
+                st.dataframe(display_pending[[
+                    'Sr No', 'Adm. No. Clean', 'Student Name', 'CLASS', 'SECTION', 
+                    "Father's Name", 'Phone No.', 'photo'
+                ]], use_container_width=True)
+
+                col_p1, col_p2 = st.columns(2)
+
+                with col_p1:
+                    # Download Pending Excel
+                    buf_pend = io.BytesIO()
+                    with pd.ExcelWriter(buf_pend, engine='openpyxl') as writer:
+                        display_pending.to_excel(writer, index=False, sheet_name='Pending_Prints')
+
+                    st.download_button(
+                        label=f"📊 Download Pending Students Excel ({len(display_pending)})",
+                        data=buf_pend.getvalue(),
+                        file_name="pending_id_cards.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+
+                with col_p2:
+                    # Download Pending Photos ZIP
+                    zip_pend_buf = io.BytesIO()
+                    pend_photos_count = 0
+
+                    with zipfile.ZipFile(zip_pend_buf, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                        for idx, p_row in display_pending.iterrows():
+                            p_code = str(p_row.get('photo', '')).strip()
+                            if p_code and p_code != 'nan':
+                                for ext in ['.jpg', '.JPG', '.jpeg', '.png']:
+                                    p_path = os.path.join(PHOTOS_DIR, f"{p_code}{ext}")
+                                    if os.path.exists(p_path):
+                                        zip_file.write(p_path, arcname=f"{p_code}{ext}")
+                                        pend_photos_count += 1
+                                        break
+
+                    st.download_button(
+                        label=f"📁 Download Pending Students Photos ZIP ({pend_photos_count})",
+                        data=zip_pend_buf.getvalue(),
+                        file_name="pending_students_photos.zip",
+                        mime="application/zip",
+                        disabled=(pend_photos_count == 0)
+                    )
+            else:
+                st.success("🎉 Sabhi bacchon ke ID Cards print ho chuke hain! Koi pending record nahi hai.")
