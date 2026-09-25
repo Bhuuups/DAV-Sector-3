@@ -117,7 +117,24 @@ if menu == "Parent Portal":
                     has_new_photo = 'No'
                     saved_photo_filename = ""
                     
-                    # Save image if uploaded by parent
+                    # Track changes made by parent
+                    changes = []
+                    if str(new_name).strip() != str(row['Student Name']).strip():
+                        changes.append(f"Name: '{row['Student Name']}' ➔ '{new_name}'")
+                    if str(new_dob).strip() != str(row.get('DOB', '')).strip():
+                        changes.append(f"DOB: '{row.get('DOB', '')}' ➔ '{new_dob}'")
+                    if str(new_father).strip() != str(row.get("Father's Name", '')).strip():
+                        changes.append(f"Father: '{row.get('Father\'s Name', '')}' ➔ '{new_father}'")
+                    if str(new_mother).strip() != str(row.get("Mother's Name", '')).strip():
+                        changes.append(f"Mother: '{row.get('Mother\'s Name', '')}' ➔ '{new_mother}'")
+                    if str(new_colour).strip() != str(row.get('colour', '')).strip():
+                        changes.append(f"Colour: '{row.get('colour', '')}' ➔ '{new_colour}'")
+                    if str(new_contact).strip() != phone_str.strip():
+                        changes.append(f"Phone: '{phone_str}' ➔ '{new_contact}'")
+                    if str(new_address).strip() != str(row.get('Address', '')).strip():
+                        changes.append(f"Address: '{row.get('Address', '')}' ➔ '{new_address}'")
+                    
+                    # Save image if uploaded
                     if new_photo is not None:
                         os.makedirs(PHOTOS_DIR, exist_ok=True)
                         has_new_photo = 'Yes'
@@ -125,11 +142,15 @@ if menu == "Parent Portal":
                         save_path = os.path.join(PHOTOS_DIR, saved_photo_filename)
                         with open(save_path, "wb") as f:
                             f.write(new_photo.getbuffer())
+                        changes.append("New Photo Uploaded")
+                    
+                    change_summary = "; ".join(changes) if changes else "No Text Change"
                     
                     correction_data = {
                         'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                         'Adm. No.': row['Adm. No. Clean'],
                         'Student Name': new_name,
+                        'Changed Fields': change_summary,
                         'DOB': new_dob,
                         'Father Name': new_father,
                         'Mother Name': new_mother,
@@ -164,50 +185,71 @@ elif menu == "Admin Panel":
             st.write(f"Total Corrections Received: **{len(corrections)}**")
             st.dataframe(corrections)
             
+            # 1. Download Correction Excel File (.xlsx)
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                corrections.to_excel(writer, index=False, sheet_name='Corrections')
+            
+            st.download_button(
+                label="📊 Download Correction Excel (With Change Log)",
+                data=buffer.getvalue(),
+                file_name="student_corrections.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            
+            st.divider()
+            st.subheader("🖼️ Download Photos")
             col1, col2 = st.columns(2)
             
             with col1:
-                # 1. Download Only Correction Excel File (.xlsx)
-                buffer = io.BytesIO()
-                with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                    corrections.to_excel(writer, index=False, sheet_name='Corrections')
+                # 2. Download ONLY NEWLY Uploaded Photos ZIP
+                zip_buffer_new = io.BytesIO()
+                new_photos_count = 0
                 
+                with zipfile.ZipFile(zip_buffer_new, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                    for idx, c_row in corrections.iterrows():
+                        saved_file = str(c_row.get('Saved Photo Filename', '')).strip()
+                        if saved_file and saved_file != 'nan' and os.path.exists(os.path.join(PHOTOS_DIR, saved_file)):
+                            filepath = os.path.join(PHOTOS_DIR, saved_file)
+                            zip_file.write(filepath, arcname=saved_file)
+                            new_photos_count += 1
+
                 st.download_button(
-                    label="📊 Download Correction Excel",
-                    data=buffer.getvalue(),
-                    file_name="student_corrections.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    label=f"📸 Download ONLY New Uploaded Photos ({new_photos_count})",
+                    data=zip_buffer_new.getvalue(),
+                    file_name="newly_uploaded_photos.zip",
+                    mime="application/zip",
+                    disabled=(new_photos_count == 0)
                 )
             
             with col2:
-                # 2. Download ZIP of Only Corrected / Updated Photos
-                zip_buffer = io.BytesIO()
-                photos_count = 0
+                # 3. Download ALL Photos of Correction Students
+                zip_buffer_all = io.BytesIO()
+                all_photos_count = 0
                 
-                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+                with zipfile.ZipFile(zip_buffer_all, 'w', zipfile.ZIP_DEFLATED) as zip_file:
                     for idx, c_row in corrections.iterrows():
                         photo_code = str(c_row.get('Photo Code', '')).strip()
                         saved_file = str(c_row.get('Saved Photo Filename', '')).strip()
                         
-                        # Pehle parent ki new uploaded photo check karein
-                        if saved_file and os.path.exists(os.path.join(PHOTOS_DIR, saved_file)):
+                        if saved_file and saved_file != 'nan' and os.path.exists(os.path.join(PHOTOS_DIR, saved_file)):
                             filepath = os.path.join(PHOTOS_DIR, saved_file)
                             zip_file.write(filepath, arcname=saved_file)
-                            photos_count += 1
-                        # Agar photo_code hai toh original photo zip me daalein
-                        elif photo_code:
+                            all_photos_count += 1
+                        elif photo_code and photo_code != 'nan':
                             for ext in ['.jpg', '.JPG', '.jpeg', '.png']:
                                 orig_path = os.path.join(PHOTOS_DIR, f"{photo_code}{ext}")
                                 if os.path.exists(orig_path):
                                     zip_file.write(orig_path, arcname=f"{photo_code}{ext}")
-                                    photos_count += 1
+                                    all_photos_count += 1
                                     break
 
                 st.download_button(
-                    label=f"🖼️ Download Corrected Photos ({photos_count})",
-                    data=zip_buffer.getvalue(),
-                    file_name="corrected_photos.zip",
-                    mime="application/zip"
+                    label=f"📁 Download All Correction Student Photos ({all_photos_count})",
+                    data=zip_buffer_all.getvalue(),
+                    file_name="all_correction_photos.zip",
+                    mime="application/zip",
+                    disabled=(all_photos_count == 0)
                 )
         else:
             st.info("Abhi tak koi correction request nahi aayi hai.")
