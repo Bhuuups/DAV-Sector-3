@@ -4,6 +4,7 @@ import os
 import io
 import zipfile
 from datetime import datetime
+from PIL import Image
 
 # Page Configuration
 st.set_page_config(page_title="ID Card Verification Portal", layout="centered")
@@ -11,6 +12,39 @@ st.set_page_config(page_title="ID Card Verification Portal", layout="centered")
 EXCEL_FILE = '1.xlsx'
 CORRECTIONS_FILE = 'corrections.csv'
 PHOTOS_DIR = 'static/photos'
+
+# Helper Function: Compress Image under 1 MB and save as JPEG
+def process_and_save_image(image_file, save_path, max_size_mb=1.0):
+    try:
+        img = Image.open(image_file)
+        # Convert RGBA/P mode to RGB for JPEG compatibility
+        if img.mode in ("RGBA", "P"):
+            img = img.convert("RGB")
+            
+        # Resize if dimensions are unnecessarily huge (e.g. max 1920px width/height)
+        max_dim = 1920
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            
+        # Quality compression loop to ensure file size <= max_size_mb
+        quality = 85
+        buffer = io.BytesIO()
+        
+        while quality >= 20:
+            buffer.seek(0)
+            buffer.truncate(0)
+            img.save(buffer, format="JPEG", quality=quality, optimize=True)
+            size_mb = len(buffer.getvalue()) / (1024 * 1024)
+            if size_mb <= max_size_mb:
+                break
+            quality -= 10
+            
+        with open(save_path, "wb") as f:
+            f.write(buffer.getvalue())
+        return True
+    except Exception as e:
+        st.error(f"Image compression/saving error: {e}")
+        return False
 
 # Load Excel Data
 @st.cache_data(ttl=60)
@@ -103,7 +137,15 @@ if menu == "Parent Portal":
                 new_contact = st.text_input("Correct Phone Number", value=phone_str)
                 new_address = st.text_area("Correct Address", value=str(row.get('Address', '')))
                 
-                new_photo = st.file_uploader("Upload New Photo (Optional)", type=['jpg', 'jpeg', 'png'])
+                st.markdown("---")
+                st.markdown("📷 **Upload / Click New Photo (Optional - Auto Compress Under 1 MB)**")
+                photo_method = st.radio("Photo Upload Mode:", ["File Upload (Gallery)", "Camera Input (Live Photo)"], horizontal=True)
+                
+                new_photo = None
+                if photo_method == "File Upload (Gallery)":
+                    new_photo = st.file_uploader("Upload New Photo", type=['jpg', 'jpeg', 'png'])
+                else:
+                    new_photo = st.camera_input("Take Live Photo")
                 
                 submit_btn = st.form_submit_button("Submit Corrections")
                 
@@ -129,14 +171,16 @@ if menu == "Parent Portal":
                         clean_addr_new = str(new_address).replace('\n', ' ').replace(',', ' ')
                         changes.append(f"Address: {clean_addr_old} -> {clean_addr_new}")
                     
+                    # Compress and save image if provided
                     if new_photo is not None:
                         os.makedirs(PHOTOS_DIR, exist_ok=True)
-                        has_new_photo = 'Yes'
                         saved_photo_filename = f"{photo_name}_updated.jpg"
                         save_path = os.path.join(PHOTOS_DIR, saved_photo_filename)
-                        with open(save_path, "wb") as f:
-                            f.write(new_photo.getbuffer())
-                        changes.append("New Photo Uploaded")
+                        
+                        success = process_and_save_image(new_photo, save_path, max_size_mb=1.0)
+                        if success:
+                            has_new_photo = 'Yes'
+                            changes.append("New Photo Uploaded (Compressed < 1MB)")
                     
                     change_summary = " | ".join(changes) if changes else "No Text Change"
                     
@@ -282,7 +326,15 @@ elif menu == "Admin Panel":
                 add_address = st.text_area("Address")
                 add_mode = st.selectbox("MODE", ["SELF", "SCHOOL BUS", "OTHER"])
                 
-                uploaded_photo_file = st.file_uploader("Upload Student Photo", type=['jpg', 'jpeg', 'png'])
+                st.markdown("---")
+                st.markdown("📷 **Student Photo (Auto Compress Under 1 MB)**")
+                add_photo_method = st.radio("Photo Source:", ["File Upload (Gallery)", "Camera Input (Live Photo)"], key="add_photo_mode", horizontal=True)
+                
+                uploaded_photo_file = None
+                if add_photo_method == "File Upload (Gallery)":
+                    uploaded_photo_file = st.file_uploader("Upload Student Photo", type=['jpg', 'jpeg', 'png'], key="add_file_up")
+                else:
+                    uploaded_photo_file = st.camera_input("Take Live Photo", key="add_cam_up")
                 
                 add_submit = st.form_submit_button("➕ Save Student Data")
                 
@@ -290,14 +342,12 @@ elif menu == "Admin Panel":
                     if not add_adm_no.strip() or not add_name.strip():
                         st.error("Adm. No. aur Student Name fill karna zaroori hai.")
                     else:
-                        # Photo save logic
                         final_photo_code = add_photo_code.strip() if add_photo_code.strip() else f"NEW_{add_adm_no.strip()}"
                         
                         if uploaded_photo_file is not None:
                             os.makedirs(PHOTOS_DIR, exist_ok=True)
                             photo_save_path = os.path.join(PHOTOS_DIR, f"{final_photo_code}.jpg")
-                            with open(photo_save_path, "wb") as f:
-                                f.write(uploaded_photo_file.getbuffer())
+                            process_and_save_image(uploaded_photo_file, photo_save_path, max_size_mb=1.0)
                         
                         new_student_dict = {
                             'Sr No': add_sr_no,
@@ -315,14 +365,13 @@ elif menu == "Admin Panel":
                             'MODE': add_mode
                         }
                         
-                        # Read existing excel, append and save back
                         try:
                             current_excel_df = pd.read_excel(EXCEL_FILE)
                             new_row_df = pd.DataFrame([new_student_dict])
                             updated_excel_df = pd.concat([current_excel_df, new_row_df], ignore_index=True)
                             updated_excel_df.to_excel(EXCEL_FILE, index=False)
                             
-                            st.cache_data.clear()  # Clear Streamlit cache so new data reflects immediately
+                            st.cache_data.clear()
                             st.success(f"✅ Student **{add_name.strip()}** successfully Excel database me add ho gaya hai!")
                         except Exception as e:
                             st.error(f"Excel file update karne me error aaya: {e}")
