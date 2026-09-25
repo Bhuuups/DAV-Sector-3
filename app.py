@@ -16,9 +16,8 @@ PHOTOS_DIR = 'static/photos'
 @st.cache_data(ttl=60)
 def load_data():
     df = pd.read_excel(EXCEL_FILE)
-    df.columns = df.columns.str.strip()  # Extra spaces hatayein
+    df.columns = df.columns.str.strip()
     
-    # Adm. No. clean string conversion
     if 'Adm. No.' in df.columns:
         df['Adm. No. Clean'] = (
             pd.to_numeric(df['Adm. No.'], errors='coerce')
@@ -34,7 +33,7 @@ df = load_data()
 st.title("📇 Student ID Card Verification Portal")
 st.write("Apne bachhe ki ID Card details check karein aur galat detail hone par correction submit karein.")
 
-# Navigation (Parent View vs Admin View)
+# Navigation
 menu = st.sidebar.radio("Navigation", ["Parent Portal", "Admin Panel"])
 
 if menu == "Parent Portal":
@@ -44,15 +43,12 @@ if menu == "Parent Portal":
     
     if adm_no_input:
         clean_search_no = str(adm_no_input).strip()
-        
-        # Search student by Adm. No.
         student = df[df['Adm. No. Clean'] == clean_search_no]
         
         if not student.empty:
             row = student.iloc[0]
             st.success(f"Record Found: **{row['Student Name']}**")
             
-            # Photo Code
             photo_name = str(row['photo']).strip() if pd.notna(row['photo']) else ""
             
             col1, col2 = st.columns([1, 2])
@@ -86,7 +82,6 @@ if menu == "Parent Portal":
                 st.markdown(f"**House / Colour:** {row.get('colour', '')}")
                 st.markdown(f"**Date of Birth (DOB):** {row.get('DOB', '')}")
                 
-                # Phone formatting
                 phone_val = row.get('Phone No.', '')
                 phone_str = str(int(phone_val)) if pd.notna(phone_val) and str(phone_val).replace('.','').isdigit() else str(phone_val)
                 st.markdown(f"**Phone No.:** {phone_str}")
@@ -96,7 +91,6 @@ if menu == "Parent Portal":
 
             st.divider()
             
-            # Correction Form
             st.subheader("✏️ Request Correction / Update")
             st.info("Agar kisi detail me galti hai toh sahi details niche darj karein:")
             
@@ -117,7 +111,6 @@ if menu == "Parent Portal":
                     has_new_photo = 'No'
                     saved_photo_filename = ""
                     
-                    # Track changes made by parent (Cleaning commas and quotes for CSV safety)
                     changes = []
                     if str(new_name).strip() != str(row['Student Name']).strip():
                         changes.append(f"Name: {row['Student Name']} -> {new_name}")
@@ -136,7 +129,6 @@ if menu == "Parent Portal":
                         clean_addr_new = str(new_address).replace('\n', ' ').replace(',', ' ')
                         changes.append(f"Address: {clean_addr_old} -> {clean_addr_new}")
                     
-                    # Save image if uploaded
                     if new_photo is not None:
                         os.makedirs(PHOTOS_DIR, exist_ok=True)
                         has_new_photo = 'Yes'
@@ -185,20 +177,25 @@ elif menu == "Admin Panel":
         if os.path.exists(CORRECTIONS_FILE):
             try:
                 corrections = pd.read_csv(CORRECTIONS_FILE, on_bad_lines='skip')
-            except Exception as e:
-                st.error("Corrupted CSV structure detected. Resetting view logic.")
+            except Exception:
                 corrections = pd.read_csv(CORRECTIONS_FILE, engine='python', on_bad_lines='skip')
-                
-            st.write(f"Total Corrections Received: **{len(corrections)}**")
-            st.dataframe(corrections)
             
-            # 1. Download Correction Excel File (.xlsx)
+            # Remove duplicates: Keep latest entry per student
+            if 'Adm. No.' in corrections.columns:
+                unique_corrections = corrections.drop_duplicates(subset=['Adm. No.'], keep='last')
+            else:
+                unique_corrections = corrections
+                
+            st.write(f"Total Submissions: **{len(corrections)}** | Unique Students: **{len(unique_corrections)}**")
+            st.dataframe(unique_corrections)
+            
+            # Download Excel
             buffer = io.BytesIO()
             with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
-                corrections.to_excel(writer, index=False, sheet_name='Corrections')
+                unique_corrections.to_excel(writer, index=False, sheet_name='Corrections')
             
             st.download_button(
-                label="📊 Download Correction Excel (With Change Log)",
+                label="📊 Download Correction Excel (Unique Records)",
                 data=buffer.getvalue(),
                 file_name="student_corrections.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
@@ -209,12 +206,11 @@ elif menu == "Admin Panel":
             col1, col2 = st.columns(2)
             
             with col1:
-                # 2. Download ONLY NEWLY Uploaded Photos ZIP
                 zip_buffer_new = io.BytesIO()
                 new_photos_count = 0
                 
                 with zipfile.ZipFile(zip_buffer_new, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                    for idx, c_row in corrections.iterrows():
+                    for idx, c_row in unique_corrections.iterrows():
                         saved_file = str(c_row.get('Saved Photo Filename', '')).strip()
                         if saved_file and saved_file != 'nan' and os.path.exists(os.path.join(PHOTOS_DIR, saved_file)):
                             filepath = os.path.join(PHOTOS_DIR, saved_file)
@@ -230,12 +226,11 @@ elif menu == "Admin Panel":
                 )
             
             with col2:
-                # 3. Download ALL Photos of Correction Students
                 zip_buffer_all = io.BytesIO()
                 all_photos_count = 0
                 
                 with zipfile.ZipFile(zip_buffer_all, 'w', zipfile.ZIP_DEFLATED) as zip_file:
-                    for idx, c_row in corrections.iterrows():
+                    for idx, c_row in unique_corrections.iterrows():
                         photo_code = str(c_row.get('Photo Code', '')).strip()
                         saved_file = str(c_row.get('Saved Photo Filename', '')).strip()
                         
@@ -258,5 +253,11 @@ elif menu == "Admin Panel":
                     mime="application/zip",
                     disabled=(all_photos_count == 0)
                 )
+
+            st.divider()
+            if st.button("🗑️ Clear / Reset All Correction Data"):
+                os.remove(CORRECTIONS_FILE)
+                st.success("All correction records cleared!")
+                st.rerun()
         else:
             st.info("Abhi tak koi correction request nahi aayi hai.")
