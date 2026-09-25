@@ -1,6 +1,7 @@
 import pandas as pd
 import streamlit as st
 import os
+import requests
 from datetime import datetime
 
 # Page Configuration
@@ -8,15 +9,17 @@ st.set_page_config(page_title="ID Card Verification Portal", layout="centered")
 
 EXCEL_FILE = '1.xlsx'
 CORRECTIONS_FILE = 'corrections.csv'
-PHOTOS_DIR = 'static/photos'
+
+# 🔴 APNE GOOGLE DRIVE FOLDER KI ID YAHAN RAKHEIN 🔴
+GDRIVE_FOLDER_ID = '1aBcDeFgHiJkLmNoPqRsTuVwXyZ'  # <-- Yahan apni Folder ID paste karein
 
 # Load Excel Data
 @st.cache_data(ttl=60)
 def load_data():
     df = pd.read_excel(EXCEL_FILE)
-    df.columns = df.columns.str.strip()  # Extra spaces hatayein
+    df.columns = df.columns.str.strip()  # Column names ke extra spaces hatayein
     
-    # Adm. No. clean string conversion
+    # Adm. No. ko Clean String me Convert Karein
     if 'Adm. No.' in df.columns:
         df['Adm. No. Clean'] = (
             pd.to_numeric(df['Adm. No.'], errors='coerce')
@@ -43,34 +46,28 @@ if menu == "Parent Portal":
     if adm_no_input:
         clean_search_no = str(adm_no_input).strip()
         
-        # Search student by Adm. No.
+        # Search by Admission No
         student = df[df['Adm. No. Clean'] == clean_search_no]
         
         if not student.empty:
             row = student.iloc[0]
             st.success(f"Record Found: **{row['Student Name']}**")
             
-            # Photo Code
+            # Photo display logic via Google Drive Thumbnail Direct URL
             photo_name = str(row['photo']).strip() if pd.notna(row['photo']) else ""
             
             col1, col2 = st.columns([1, 2])
             
             with col1:
                 if photo_name:
-                    # Check local static folder first
-                    photo_jpg = os.path.join(PHOTOS_DIR, f"{photo_name}.jpg")
-                    photo_jpeg = os.path.join(PHOTOS_DIR, f"{photo_name}.jpeg")
-                    photo_png = os.path.join(PHOTOS_DIR, f"{photo_name}.png")
-                    
-                    if os.path.exists(photo_jpg):
-                        st.image(photo_jpg, caption=f"Photo Code: {photo_name}", width=180)
-                    elif os.path.exists(photo_jpeg):
-                        st.image(photo_jpeg, caption=f"Photo Code: {photo_name}", width=180)
-                    elif os.path.exists(photo_png):
-                        st.image(photo_png, caption=f"Photo Code: {photo_name}", width=180)
-                    else:
-                        st.info(f"Photo Code: {photo_name}")
-                        st.warning("Photo File Not Found in Server Directory")
+                    # Drive thumbnail trick to fetch image preview directly by filename/photo code
+                    drive_img_url = f"https://lh3.googleusercontent.com/d/{photo_name}"
+                    # Display photo
+                    st.image(
+                        f"https://drive.google.com/thumbnail?id={photo_name}&sz=w500", 
+                        caption=f"Photo Code: {photo_name}", 
+                        width=180
+                    )
                 else:
                     st.warning("Photo Code Not Found")
             
@@ -82,7 +79,7 @@ if menu == "Parent Portal":
                 st.markdown(f"**House / Colour:** {row.get('colour', '')}")
                 st.markdown(f"**Date of Birth (DOB):** {row.get('DOB', '')}")
                 
-                # Phone formatting
+                # Phone number formatting
                 phone_val = row.get('Phone No.', '')
                 phone_str = str(int(phone_val)) if pd.notna(phone_val) and str(phone_val).replace('.','').isdigit() else str(phone_val)
                 st.markdown(f"**Phone No.:** {phone_str}")
@@ -123,12 +120,6 @@ if menu == "Parent Portal":
                         'Photo Code': photo_name,
                         'New Photo Uploaded': 'Yes' if new_photo is not None else 'No'
                     }
-                    
-                    if new_photo is not None:
-                        os.makedirs(PHOTOS_DIR, exist_ok=True)
-                        save_path = os.path.join(PHOTOS_DIR, f"{photo_name}_updated.jpg")
-                        with open(save_path, "wb") as f:
-                            f.write(new_photo.getbuffer())
                     
                     corr_df = pd.DataFrame([correction_data])
                     
