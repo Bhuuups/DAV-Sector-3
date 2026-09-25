@@ -1,6 +1,7 @@
 import pandas as pd
 import streamlit as st
 import os
+import requests
 from datetime import datetime
 
 # Page Configuration
@@ -8,15 +9,17 @@ st.set_page_config(page_title="ID Card Verification Portal", layout="centered")
 
 EXCEL_FILE = '1.xlsx'
 CORRECTIONS_FILE = 'corrections.csv'
-PHOTOS_DIR = 'static/photos'
+
+# Google Drive Folder ID
+GDRIVE_FOLDER_ID = '1x9XLO3npiQ5u249fsLbqAFxwsdKz6X85'
 
 # Load Excel Data
 @st.cache_data(ttl=60)
 def load_data():
     df = pd.read_excel(EXCEL_FILE)
-    df.columns = df.columns.str.strip()  # Column names ke extra spaces hatayein
+    df.columns = df.columns.str.strip()  # Extra spaces hatayein
     
-    # Adm. No. ko Clean String me Convert Karein
+    # Adm. No. clean string conversion
     if 'Adm. No.' in df.columns:
         df['Adm. No. Clean'] = (
             pd.to_numeric(df['Adm. No.'], errors='coerce')
@@ -32,7 +35,7 @@ df = load_data()
 st.title("📇 Student ID Card Verification Portal")
 st.write("Apne bachhe ki ID Card details check karein aur galat detail hone par correction submit karein.")
 
-# Multi-navigation (Parent View vs Admin View)
+# Navigation (Parent View vs Admin View)
 menu = st.sidebar.radio("Navigation", ["Parent Portal", "Admin Panel"])
 
 if menu == "Parent Portal":
@@ -43,24 +46,29 @@ if menu == "Parent Portal":
     if adm_no_input:
         clean_search_no = str(adm_no_input).strip()
         
-        # Search by Admission No
+        # Search student by Adm. No.
         student = df[df['Adm. No. Clean'] == clean_search_no]
         
         if not student.empty:
             row = student.iloc[0]
             st.success(f"Record Found: **{row['Student Name']}**")
             
-            # Photo display logic
+            # Photo Code
             photo_name = str(row['photo']).strip() if pd.notna(row['photo']) else ""
-            photo_path = os.path.join(PHOTOS_DIR, f"{photo_name}.jpg")
             
             col1, col2 = st.columns([1, 2])
             
             with col1:
-                if photo_name and os.path.exists(photo_path):
-                    st.image(photo_path, caption=f"Photo Code: {photo_name}", width=180)
+                if photo_name:
+                    # Google Drive Direct Thumbnail Link
+                    photo_url = f"https://drive.google.com/thumbnail?id={photo_name}&sz=w500"
+                    st.image(
+                        photo_url, 
+                        caption=f"Photo Code: {photo_name}", 
+                        width=180
+                    )
                 else:
-                    st.warning(f"Photo Not Found ({photo_name})")
+                    st.warning("Photo Code Not Found")
             
             with col2:
                 st.markdown(f"**Sr No:** {row.get('Sr No', 'N/A')}")
@@ -70,7 +78,7 @@ if menu == "Parent Portal":
                 st.markdown(f"**House / Colour:** {row.get('colour', '')}")
                 st.markdown(f"**Date of Birth (DOB):** {row.get('DOB', '')}")
                 
-                # Phone number formatting
+                # Phone formatting
                 phone_val = row.get('Phone No.', '')
                 phone_str = str(int(phone_val)) if pd.notna(phone_val) and str(phone_val).replace('.','').isdigit() else str(phone_val)
                 st.markdown(f"**Phone No.:** {phone_str}")
@@ -111,13 +119,6 @@ if menu == "Parent Portal":
                         'Photo Code': photo_name,
                         'New Photo Uploaded': 'Yes' if new_photo is not None else 'No'
                     }
-                    
-                    # Save image if uploaded
-                    if new_photo is not None:
-                        os.makedirs(PHOTOS_DIR, exist_ok=True)
-                        save_path = os.path.join(PHOTOS_DIR, f"{photo_name}_updated.jpg")
-                        with open(save_path, "wb") as f:
-                            f.write(new_photo.getbuffer())
                     
                     corr_df = pd.DataFrame([correction_data])
                     
