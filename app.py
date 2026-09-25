@@ -7,10 +7,11 @@ from datetime import datetime
 from PIL import Image
 
 # Page Configuration
-st.set_page_config(page_title="ID Card Verification Portal", layout="centered")
+st.set_page_config(page_title="ID Card Verification & Printing Portal", layout="wide")
 
 EXCEL_FILE = '1.xlsx'
 CORRECTIONS_FILE = 'corrections.csv'
+PRINT_STATUS_FILE = 'print_status.csv'
 PHOTOS_DIR = 'static/photos'
 
 # Helper Function: Compress Image under 1 MB and save as JPEG
@@ -40,10 +41,23 @@ def process_and_save_image(image_file, save_path, max_size_mb=1.0):
             f.write(buffer.getvalue())
         return True
     except Exception as e:
-        st.error(f"Image compression/saving error: {e}")
+        st.error(f"Image compression error: {e}")
         return False
 
-# Load Excel Data
+# Helper Function: Load Print Status CSV
+def load_print_status():
+    if os.path.exists(PRINT_STATUS_FILE):
+        try:
+            return pd.read_csv(PRINT_STATUS_FILE, dtype={'Adm. No. Clean': str})
+        except Exception:
+            return pd.DataFrame(columns=['Adm. No. Clean', 'Is_Printed', 'Updated_At'])
+    return pd.DataFrame(columns=['Adm. No. Clean', 'Is_Printed', 'Updated_At'])
+
+# Helper Function: Save Print Status
+def save_print_status(status_df):
+    status_df.to_csv(PRINT_STATUS_FILE, index=False)
+
+# Load Master Excel Data
 @st.cache_data(ttl=60)
 def load_data():
     df = pd.read_excel(EXCEL_FILE)
@@ -57,16 +71,23 @@ def load_data():
             .astype(str)
             .str.strip()
         )
+    
+    for col in ['CLASS', 'SECTION']:
+        if col in df.columns:
+            df[col] = df[col].astype(str).str.strip()
+            
     return df
 
 df = load_data()
 
-st.title("📇 Student ID Card Verification Portal")
-st.write("Apne bachhe ki ID Card details check karein aur galat detail hone par correction submit karein.")
+st.title("📇 Student ID Card Portal")
 
 # Navigation
-menu = st.sidebar.radio("Navigation", ["Parent Portal", "Admin Panel"])
+menu = st.sidebar.radio("Navigation Menu", ["Parent Portal", "Teachers Checklist (Printing Status)", "Admin Panel"])
 
+# ---------------------------------------------------------
+# 1. PARENT PORTAL
+# ---------------------------------------------------------
 if menu == "Parent Portal":
     st.subheader("🔍 Search Student Profile")
     
@@ -207,6 +228,98 @@ if menu == "Parent Portal":
         else:
             st.error("Admission Number nahi mila. Kripya sahi Adm. No. enter karein.")
 
+# ---------------------------------------------------------
+# 2. TEACHERS CHECKLIST (PRINTING STATUS PORTAL)
+# ---------------------------------------------------------
+elif menu == "Teachers Checklist (Printing Status)":
+    st.subheader("👩‍🏫 Teachers Class-wise ID Card Printing Checklist")
+    st.info("Class & Section filter select karke har student ke aage 'Printed ✅' status tick karein.")
+
+    print_df = load_print_status()
+
+    # Class & Section Filters
+    all_classes = sorted([c for c in df['CLASS'].dropna().unique() if str(c).strip() != ''])
+    selected_class = st.selectbox("Select Class:", ["Select Class"] + all_classes)
+
+    if selected_class != "Select Class":
+        class_students = df[df['CLASS'] == selected_class]
+        all_sections = sorted([s for s in class_students['SECTION'].dropna().unique() if str(s).strip() != ''])
+        selected_section = st.selectbox("Select Section:", ["All Sections"] + all_sections)
+
+        if selected_section != "All Sections":
+            filtered_df = class_students[class_students['SECTION'] == selected_section]
+        else:
+            filtered_df = class_students
+
+        total_students = len(filtered_df)
+
+        # Merge with current printed status
+        if not print_df.empty:
+            merged_df = pd.merge(filtered_df, print_df, on='Adm. No. Clean', how='left')
+            merged_df['Is_Printed'] = merged_df['Is_Printed'].fillna(False).astype(bool)
+        else:
+            merged_df = filtered_df.copy()
+            merged_df['Is_Printed'] = False
+
+        printed_count = merged_df['Is_Printed'].sum()
+        percentage = (printed_count / total_students * 100) if total_students > 0 else 0
+
+        st.markdown(f"### 📊 Printing Progress: **{printed_count} / {total_students}** Printed ({percentage:.1f}%)")
+        st.progress(printed_count / total_students if total_students > 0 else 0.0)
+
+        st.divider()
+
+        # Display Students with Small Photos and Checkbox
+        updated_status = False
+
+        for idx, s_row in merged_df.iterrows():
+            adm_no = str(s_row['Adm. No. Clean'])
+            photo_code = str(s_row.get('photo', '')).strip() if pd.notna(s_row.get('photo')) else ""
+            is_printed = bool(s_row['Is_Printed'])
+
+            c_photo, c_details, c_check = st.columns([1, 4, 1.5])
+
+            with c_photo:
+                photo_found = False
+                if photo_code:
+                    for ext in ['.jpg', '.JPG', '.jpeg', '.png']:
+                        p_path = os.path.join(PHOTOS_DIR, f"{photo_code}{ext}")
+                        if os.path.exists(p_path):
+                            st.image(p_path, width=70)
+                            photo_found = True
+                            break
+                if not photo_found:
+                    st.caption("No Photo")
+
+            with c_details:
+                st.markdown(f"**{s_row.get('Student Name', '')}** (Adm No: `{adm_no}`) | Sr No: {s_row.get('Sr No', 'N/A')}")
+                st.caption(f"Father: {s_row.get('Father\'s Name', '')} | DOB: {s_row.get('DOB', '')} | Ph: {s_row.get('Phone No.', '')}")
+
+            with c_check:
+                new_val = st.checkbox("Printed ✅", value=is_printed, key=f"chk_{adm_no}")
+                if new_val != is_printed:
+                    # Update status in print_df dataframe
+                    if adm_no in print_df['Adm. No. Clean'].values:
+                        print_df.loc[print_df['Adm. No. Clean'] == adm_no, 'Is_Printed'] = new_val
+                        print_df.loc[print_df['Adm. No. Clean'] == adm_no, 'Updated_At'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    else:
+                        new_rec = pd.DataFrame([{
+                            'Adm. No. Clean': adm_no,
+                            'Is_Printed': new_val,
+                            'Updated_At': datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                        }])
+                        print_df = pd.concat([print_df, new_rec], ignore_index=True)
+                    updated_status = True
+
+            st.markdown("<hr style='margin: 5px 0;'>", unsafe_allow_html=True)
+
+        if updated_status:
+            save_print_status(print_df)
+            st.rerun()
+
+# ---------------------------------------------------------
+# 3. ADMIN PANEL
+# ---------------------------------------------------------
 elif menu == "Admin Panel":
     st.subheader("🔒 Admin Dashboard")
     password = st.text_input("Enter Admin Password:", type="password")
@@ -214,7 +327,7 @@ elif menu == "Admin Panel":
     if password == "admin123":
         st.success("Welcome Admin!")
         
-        tab1, tab2 = st.tabs(["📊 Corrections List", "➕ Add New Student Data"])
+        tab1, tab2, tab3 = st.tabs(["📊 Corrections List", "➕ Add New Student Data", "🖨️ Class-wise Print Report"])
         
         with tab1:
             if os.path.exists(CORRECTIONS_FILE):
@@ -305,7 +418,7 @@ elif menu == "Admin Panel":
                 
         with tab2:
             st.subheader("➕ Naya Student Record Add Karein")
-            st.info("Yahan se naya student data add karne par wo '1.xlsx' aur 'Corrections List' dono jagah save ho jayega.")
+            st.info("Yahan se naya student data add karne par wo '1.xlsx' aur 'Corrections List' dono me save ho jayega.")
             
             with st.form(key="add_student_form"):
                 add_sr_no = st.number_input("Sr No", value=len(df)+1, step=1)
@@ -365,7 +478,6 @@ elif menu == "Admin Panel":
                             'MODE': add_mode
                         }
                         
-                        # 1. Save to main Excel database (1.xlsx)
                         try:
                             current_excel_df = pd.read_excel(EXCEL_FILE)
                             new_row_df = pd.DataFrame([new_student_dict])
@@ -374,7 +486,6 @@ elif menu == "Admin Panel":
                         except Exception as e:
                             st.error(f"Excel file update karne me error aaya: {e}")
                         
-                        # 2. Also save to Corrections CSV (corrections.csv)
                         correction_entry = {
                             'Timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                             'Adm. No.': add_adm_no.strip(),
@@ -399,3 +510,34 @@ elif menu == "Admin Panel":
                             
                         st.cache_data.clear()
                         st.success(f"✅ Student **{add_name.strip()}** Excel database aur Corrections List dono me add ho gaya hai!")
+
+        with tab3:
+            st.subheader("🖨️ Class-wise Printing Summary Report")
+            print_df = load_print_status()
+
+            if not print_df.empty:
+                full_merged = pd.merge(df, print_df, on='Adm. No. Clean', how='left')
+                full_merged['Is_Printed'] = full_merged['Is_Printed'].fillna(False).astype(bool)
+
+                summary = full_merged.groupby(['CLASS', 'SECTION']).agg(
+                    Total_Students=('Adm. No. Clean', 'count'),
+                    Printed_Count=('Is_Printed', 'sum')
+                ).reset_index()
+
+                summary['Pending_Count'] = summary['Total_Students'] - summary['Printed_Count']
+                summary['Progress (%)'] = (summary['Printed_Count'] / summary['Total_Students'] * 100).round(1)
+
+                st.dataframe(summary, use_container_width=True)
+
+                buf_rep = io.BytesIO()
+                with pd.ExcelWriter(buf_rep, engine='openpyxl') as writer:
+                    summary.to_excel(writer, index=False, sheet_name='Print_Summary')
+
+                st.download_button(
+                    label="📥 Download Class-wise Print Summary Excel",
+                    data=buf_rep.getvalue(),
+                    file_name="classwise_print_summary.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+            else:
+                st.info("Abhi tak teachers ne kisi record ko tick mark nahi kiya hai.")
