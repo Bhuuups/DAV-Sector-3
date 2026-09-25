@@ -247,9 +247,9 @@ elif menu == "Teachers Checklist (Printing Status)":
         selected_section = st.selectbox("Select Section:", ["All Sections"] + all_sections)
 
         if selected_section != "All Sections":
-            filtered_df = class_students[class_students['SECTION'] == selected_section]
+            filtered_df = class_students[class_students['SECTION'] == selected_section].copy()
         else:
-            filtered_df = class_students
+            filtered_df = class_students.copy()
 
         total_students = len(filtered_df)
 
@@ -269,10 +269,10 @@ elif menu == "Teachers Checklist (Printing Status)":
 
         st.divider()
 
-        # Display Students with Small Photos and Checkbox
+        # Display Students with Small Photos and Unique Key Checkbox
         updated_status = False
 
-        for idx, s_row in merged_df.iterrows():
+        for idx, s_row in merged_df.reset_index(drop=True).iterrows():
             adm_no = str(s_row['Adm. No. Clean'])
             photo_code = str(s_row.get('photo', '')).strip() if pd.notna(s_row.get('photo')) else ""
             is_printed = bool(s_row['Is_Printed'])
@@ -296,9 +296,9 @@ elif menu == "Teachers Checklist (Printing Status)":
                 st.caption(f"Father: {s_row.get('Father\'s Name', '')} | DOB: {s_row.get('DOB', '')} | Ph: {s_row.get('Phone No.', '')}")
 
             with c_check:
-                new_val = st.checkbox("Printed ✅", value=is_printed, key=f"chk_{adm_no}")
+                # Unique key using Adm No + Index to prevent Duplicate Key Error
+                new_val = st.checkbox("Printed ✅", value=is_printed, key=f"chk_{adm_no}_{idx}")
                 if new_val != is_printed:
-                    # Update status in print_df dataframe
                     if adm_no in print_df['Adm. No. Clean'].values:
                         print_df.loc[print_df['Adm. No. Clean'] == adm_no, 'Is_Printed'] = new_val
                         print_df.loc[print_df['Adm. No. Clean'] == adm_no, 'Updated_At'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
