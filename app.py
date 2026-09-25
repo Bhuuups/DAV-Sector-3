@@ -1,17 +1,14 @@
 import pandas as pd
 import streamlit as st
 import os
-import requests
 from datetime import datetime
 
 # Page Configuration
-st.set_page_config(page_title="DAV Sector - 3", layout="centered")
+st.set_page_config(page_title="ID Card Verification Portal", layout="centered")
 
 EXCEL_FILE = '1.xlsx'
 CORRECTIONS_FILE = 'corrections.csv'
-
-# Google Drive Folder ID
-GDRIVE_FOLDER_ID = '1x9XLO3npiQ5u249fsLbqAFxwsdKz6X85'
+PHOTOS_DIR = 'static/photos'
 
 # Load Excel Data
 @st.cache_data(ttl=60)
@@ -60,13 +57,20 @@ if menu == "Parent Portal":
             
             with col1:
                 if photo_name:
-                    # Google Drive Direct Thumbnail Link
-                    photo_url = f"https://drive.google.com/thumbnail?id={photo_name}&sz=w500"
-                    st.image(
-                        photo_url, 
-                        caption=f"Photo Code: {photo_name}", 
-                        width=180
-                    )
+                    # Check local static folder first
+                    photo_jpg = os.path.join(PHOTOS_DIR, f"{photo_name}.jpg")
+                    photo_jpeg = os.path.join(PHOTOS_DIR, f"{photo_name}.jpeg")
+                    photo_png = os.path.join(PHOTOS_DIR, f"{photo_name}.png")
+                    
+                    if os.path.exists(photo_jpg):
+                        st.image(photo_jpg, caption=f"Photo Code: {photo_name}", width=180)
+                    elif os.path.exists(photo_jpeg):
+                        st.image(photo_jpeg, caption=f"Photo Code: {photo_name}", width=180)
+                    elif os.path.exists(photo_png):
+                        st.image(photo_png, caption=f"Photo Code: {photo_name}", width=180)
+                    else:
+                        st.info(f"Photo Code: {photo_name}")
+                        st.warning("Photo File Not Found in Server Directory")
                 else:
                     st.warning("Photo Code Not Found")
             
@@ -119,6 +123,12 @@ if menu == "Parent Portal":
                         'Photo Code': photo_name,
                         'New Photo Uploaded': 'Yes' if new_photo is not None else 'No'
                     }
+                    
+                    if new_photo is not None:
+                        os.makedirs(PHOTOS_DIR, exist_ok=True)
+                        save_path = os.path.join(PHOTOS_DIR, f"{photo_name}_updated.jpg")
+                        with open(save_path, "wb") as f:
+                            f.write(new_photo.getbuffer())
                     
                     corr_df = pd.DataFrame([correction_data])
                     
